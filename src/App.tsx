@@ -355,15 +355,16 @@ export default function App() {
       const randomPraise = PRAISES[Math.floor(Math.random() * PRAISES.length)];
       setFeedback({
         isCorrect: true,
-        message: randomPraise
+        isFinal: true,
+        message: wrongAttempts > 0 ? 'כל הכבוד! הצלחת לתקן! 🎉' : randomPraise
       });
 
       // Update stats
       setStats(prev => {
-        const nextStreak = prev.currentStreak + 1;
+        const nextStreak = wrongAttempts === 0 ? prev.currentStreak + 1 : prev.currentStreak;
         const nextBest = Math.max(prev.bestStreak, nextStreak);
         localStorage.setItem('multiplication_best_streak', String(nextBest));
-        if (nextStreak % 5 === 0) {
+        if (nextStreak > 0 && nextStreak % 5 === 0) {
           soundPlayer.playFanfare();
         }
         return {
@@ -388,7 +389,7 @@ export default function App() {
 
       // Auto advance to next question after 1.1s
       setTimeout(() => {
-        generateNewQuestion(quizSelectedTable, quizFactorA, quizFactorB);
+        generateNewQuestion(quizSelectedTables, quizFactorA, quizFactorB);
       }, 1100);
 
     } else {
@@ -396,16 +397,59 @@ export default function App() {
       setIsShaking(true);
       setTimeout(() => setIsShaking(false), 400);
 
-      setFeedback({
-        isCorrect: false,
-        message: `לא נורא! התשובה הנכונה היא ${correctAnswer} (${quizFactorA} פעמים ${quizFactorB} זה ${correctAnswer})`
-      });
+      if (quizMode === 'practice') {
+        const nextAttempts = wrongAttempts + 1;
+        setWrongAttempts(nextAttempts);
 
-      setStats(prev => ({
-        ...prev,
-        totalAnswered: prev.totalAnswered + 1,
-        currentStreak: 0
-      }));
+        // Reset streak on error
+        setStats(prev => ({
+          ...prev,
+          currentStreak: 0
+        }));
+
+        if (nextAttempts > 3) {
+          // Wrong more than 3 times: reveal answer!
+          setFeedback({
+            isCorrect: false,
+            isFinal: true,
+            message: `לא נורא! התשובה הנכונה היא ${correctAnswer} (${quizFactorA} פעמים ${quizFactorB} זה ${correctAnswer})`
+          });
+          setStats(prev => ({
+            ...prev,
+            totalAnswered: prev.totalAnswered + 1
+          }));
+        } else {
+          // 1, 2, or 3 mistakes: DO NOT reveal answer! Give encouraging retry prompt.
+          let msg = '';
+          if (nextAttempts === 1) {
+            msg = `לא מדויק, נסה שוב! 💪 (טעות 1 מתוך 3)`;
+          } else if (nextAttempts === 2) {
+            msg = `עוד לא... נסה שוב! אפשר ללחוץ על רמז 💡 (טעות 2 מתוך 3)`;
+          } else {
+            msg = `עדיין לא נכון... ניסיון אחרון בעצמך! 🤔 (טעות 3 מתוך 3)`;
+          }
+          setFeedback({
+            isCorrect: false,
+            isFinal: false,
+            message: msg
+          });
+          // Clear user input so student can immediately type next attempt
+          setUserInput('');
+        }
+      } else {
+        // Timed mode: reveal immediately
+        setFeedback({
+          isCorrect: false,
+          isFinal: true,
+          message: `לא מדויק! ${quizFactorA} × ${quizFactorB} = ${correctAnswer}`
+        });
+
+        setStats(prev => ({
+          ...prev,
+          totalAnswered: prev.totalAnswered + 1,
+          currentStreak: 0
+        }));
+      }
     }
   };
 
@@ -436,7 +480,7 @@ export default function App() {
         soundPlayer.playKeySound();
         setUserInput(prev => prev.slice(0, -1));
       } else if (e.key === 'Enter') {
-        if (feedback?.isCorrect) {
+        if (feedback?.isCorrect || feedback?.isFinal) {
           generateNewQuestion();
         } else {
           checkAnswer();
