@@ -215,6 +215,7 @@ export default function App() {
   // Statistics
   const [stats, setStats] = useState({
     totalAnswered: 0,
+    totalQuestions: 0,
     correctCount: 0,
     currentStreak: 0,
     bestStreak: Number(localStorage.getItem('multiplication_best_streak') || '0'),
@@ -369,6 +370,7 @@ export default function App() {
         }
         return {
           totalAnswered: prev.totalAnswered + 1,
+          totalQuestions: prev.totalQuestions + 1,
           correctCount: prev.correctCount + 1,
           currentStreak: nextStreak,
           bestStreak: nextBest
@@ -416,7 +418,7 @@ export default function App() {
           });
           setStats(prev => ({
             ...prev,
-            totalAnswered: prev.totalAnswered + 1
+            totalQuestions: prev.totalQuestions + 1
           }));
         } else {
           // 1, 2, or 3 mistakes: DO NOT reveal answer! Give encouraging retry prompt.
@@ -446,7 +448,7 @@ export default function App() {
 
         setStats(prev => ({
           ...prev,
-          totalAnswered: prev.totalAnswered + 1,
+          totalQuestions: prev.totalQuestions + 1,
           currentStreak: 0
         }));
       }
@@ -492,8 +494,8 @@ export default function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeTab, userInput, feedback, generateNewQuestion]);
 
-  const accuracyPercent = stats.totalAnswered > 0
-    ? Math.round((stats.correctCount / stats.totalAnswered) * 100)
+  const accuracyPercent = stats.totalQuestions > 0
+    ? Math.round((stats.totalAnswered / stats.totalQuestions) * 100)
     : 0;
 
   return (
@@ -799,23 +801,69 @@ export default function App() {
             </button>
           </div>
 
-          {/* Focus Table Selection */}
-          <div className="table-select-row">
-            <span>בחר כפולות לתרגול:</span>
-            <select 
-              className="table-dropdown"
-              value={quizSelectedTable}
-              onChange={(e) => {
-                const val = e.target.value === 'all' ? 'all' : Number(e.target.value);
-                setQuizSelectedTable(val);
-                generateNewQuestion(val);
-              }}
-            >
-              <option value="all">כל לוח הכפל (1 עד 10)</option>
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => (
-                <option key={n} value={n}>רק לוח ה-{n}</option>
-              ))}
-            </select>
+          {/* Multi-Select Focus Tables */}
+          <div className="table-select-section">
+            <div className="table-select-header">
+              <div className="table-select-title">
+                <Shuffle size={18} />
+                <span>בחר כפולות לתרגול:</span>
+              </div>
+              <div className="table-preset-buttons">
+                <button 
+                  type="button"
+                  className={`preset-btn ${quizSelectedTables.length === 10 ? 'active' : ''}`}
+                  onClick={selectAllTables}
+                  title="בחר את כל לוח הכפל"
+                >
+                  כל הלוח (1-10)
+                </button>
+                <button 
+                  type="button"
+                  className={`preset-btn ${quizSelectedTables.length === 5 && [2,4,6,8,10].every(n => quizSelectedTables.includes(n)) ? 'active' : ''}`}
+                  onClick={selectEvenTables}
+                  title="כפולות זוגיות: 2, 4, 6, 8, 10"
+                >
+                  זוגיים
+                </button>
+                <button 
+                  type="button"
+                  className={`preset-btn ${quizSelectedTables.length === 5 && [1,3,5,7,9].every(n => quizSelectedTables.includes(n)) ? 'active' : ''}`}
+                  onClick={selectOddTables}
+                  title="כפולות אי-זוגיות: 1, 3, 5, 7, 9"
+                >
+                  אי-זוגיים
+                </button>
+              </div>
+            </div>
+
+            {/* Chips 1 to 10 */}
+            <div className="table-chips-grid">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(n => {
+                const isSelected = quizSelectedTables.includes(n);
+                return (
+                  <button
+                    key={n}
+                    type="button"
+                    className={`table-chip ${isSelected ? 'active' : ''}`}
+                    onClick={() => toggleTableSelection(n)}
+                    title={`כפולות של ${n}`}
+                  >
+                    <span>×{n}</span>
+                    {isSelected && <span className="table-chip-check">✓</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Status caption */}
+            <div className="table-select-status">
+              <span>
+                {quizSelectedTables.length === 10
+                  ? 'נבחרו כל 10 הכפולות'
+                  : `נבחרו ${quizSelectedTables.length} כפולות: ${quizSelectedTables.join(', ')}`}
+              </span>
+              <span className="table-status-tag">🔀 תרגילים מעורבבים</span>
+            </div>
           </div>
 
           {/* Timed Mode Finished View */}
@@ -874,20 +922,63 @@ export default function App() {
                 </div>
               </div>
 
+              {/* Practice Mode Attempts Tracker */}
+              {quizMode === 'practice' && (
+                <div className="practice-attempts-tracker">
+                  <div className="attempts-dots-row">
+                    <span className="attempts-title">פסילות בשאלה זו:</span>
+                    <div className="attempts-chips">
+                      {[1, 2, 3].map(attemptNum => (
+                        <span
+                          key={attemptNum}
+                          className={`attempt-chip ${wrongAttempts >= attemptNum ? 'failed' : 'clean'}`}
+                          title={wrongAttempts >= attemptNum ? `טעות ${attemptNum}` : `ניסיון ${attemptNum} פנוי`}
+                        >
+                          {wrongAttempts >= attemptNum ? '✕' : attemptNum}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                  {wrongAttempts > 0 && wrongAttempts <= 3 && (
+                    <div className="attempts-subtext">
+                      {wrongAttempts === 3 
+                        ? '⚠️ הזדמנות אחרונה! בטעות הבאה התשובה תיחשף' 
+                        : `נותרו עוד ${3 - wrongAttempts} ניסיונות לפני גילוי התשובה`}
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Feedback Alert */}
               {feedback && (
-                <div className={`feedback-banner ${feedback.isCorrect ? 'success' : 'error'}`}>
-                  {feedback.isCorrect ? (
-                    <>
-                      <CheckCircle2 size={24} />
+                <div className={`feedback-banner ${feedback.isCorrect ? 'success' : feedback.isFinal ? 'error' : 'retry'}`}>
+                  <div className="feedback-banner-content">
+                    <div className="feedback-row">
+                      {feedback.isCorrect ? (
+                        <CheckCircle2 size={24} />
+                      ) : feedback.isFinal ? (
+                        <XCircle size={24} />
+                      ) : (
+                        <AlertCircle size={24} />
+                      )}
                       <span>{feedback.message}</span>
-                    </>
-                  ) : (
-                    <>
-                      <XCircle size={24} />
-                      <span>{feedback.message}</span>
-                    </>
-                  )}
+                    </div>
+
+                    {/* Prominent Next Question button if answer is revealed */}
+                    {feedback.isFinal && !feedback.isCorrect && (
+                      <button 
+                        type="button"
+                        className="next-question-callout"
+                        onClick={() => {
+                          soundPlayer.playKeySound();
+                          generateNewQuestion();
+                        }}
+                      >
+                        <span>לשאלה הבאה</span>
+                        <ArrowRight size={18} />
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
 
