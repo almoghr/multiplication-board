@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import confetti from 'canvas-confetti';
 import { 
   Volume2, VolumeX, Sparkles, Trophy, RotateCcw, 
   Lightbulb, ArrowRight, Eye, EyeOff, CheckCircle2, 
-  XCircle, Zap, Flame, Award, Grid
+  XCircle, Zap, Flame, Award, Grid, AlertCircle, Shuffle
 } from 'lucide-react';
 
 // Sound Synthesizer via Web Audio API
@@ -119,6 +119,31 @@ const PRAISES = [
   'תותח/ית!'
 ];
 
+// Shuffled deck generator for selected multiplication tables
+function createShuffledDeck(tables: number[]): Array<{ a: number; b: number }> {
+  const activeTables = tables.length > 0 ? tables : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+  const deck: Array<{ a: number; b: number }> = [];
+
+  for (const t of activeTables) {
+    for (let m = 1; m <= 10; m++) {
+      // 50% random chance for orientation (e.g. 4 × 7 vs 7 × 4) for rich variety!
+      if (Math.random() < 0.5) {
+        deck.push({ a: t, b: m });
+      } else {
+        deck.push({ a: m, b: t });
+      }
+    }
+  }
+
+  // Fisher-Yates shuffle
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+
+  return deck;
+}
+
 export default function App() {
   // Tab State: 'board' | 'quiz'
   const [activeTab, setActiveTab] = useState<'board' | 'quiz'>('board');
@@ -162,23 +187,30 @@ export default function App() {
     soundPlayer.playKeySound();
     setQuizFactorA(r);
     setQuizFactorB(c);
-    setQuizSelectedTable(r);
+    setQuizSelectedTables([r]);
+    deckRef.current = createShuffledDeck([r]);
     setActiveTab('quiz');
     setUserInput('');
     setFeedback(null);
+    setWrongAttempts(0);
   };
 
   // ==========================================
   // TAB 2: QUIZ & PRACTICE STATE
   // ==========================================
   const [quizMode, setQuizMode] = useState<'practice' | 'timed'>('practice');
-  const [quizSelectedTable, setQuizSelectedTable] = useState<number | 'all'>('all');
+  // Multi-select tables: default all (1 to 10)
+  const [quizSelectedTables, setQuizSelectedTables] = useState<number[]>([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   const [quizFactorA, setQuizFactorA] = useState<number>(7);
   const [quizFactorB, setQuizFactorB] = useState<number>(8);
   const [userInput, setUserInput] = useState<string>('');
-  const [feedback, setFeedback] = useState<{ isCorrect: boolean; message: string } | null>(null);
+  const [feedback, setFeedback] = useState<{ isCorrect: boolean; message: string; isFinal?: boolean } | null>(null);
   const [showHint, setShowHint] = useState<boolean>(false);
   const [isShaking, setIsShaking] = useState<boolean>(false);
+  const [wrongAttempts, setWrongAttempts] = useState<number>(0);
+
+  // Deck of shuffled questions for high variety and zero immediate repetition
+  const deckRef = useRef<Array<{ a: number; b: number }>>([]);
 
   // Statistics
   const [stats, setStats] = useState({
@@ -197,30 +229,83 @@ export default function App() {
   });
   const [isTimeUp, setIsTimeUp] = useState<boolean>(false);
 
-  // Generate a new multiplication question
-  const generateNewQuestion = useCallback((tableChoice = quizSelectedTable, prevA?: number, prevB?: number) => {
-    let a: number;
-    let b: number;
-    
-    // Choose numbers between 1 and 10 (no 0)
-    if (tableChoice === 'all') {
-      do {
-        a = Math.floor(Math.random() * 10) + 1;
-        b = Math.floor(Math.random() * 10) + 1;
-      } while (prevA !== undefined && prevB !== undefined && a === prevA && b === prevB);
-    } else {
-      a = tableChoice;
-      do {
-        b = Math.floor(Math.random() * 10) + 1;
-      } while (prevB !== undefined && b === prevB);
+  // Generate a new multiplication question from shuffled deck
+  const generateNewQuestion = useCallback((tablesChoice = quizSelectedTables, prevA?: number, prevB?: number) => {
+    const activeTables = tablesChoice.length > 0 ? tablesChoice : [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+
+    // If deck is empty or depleted, refill and shuffle
+    if (deckRef.current.length === 0) {
+      deckRef.current = createShuffledDeck(activeTables);
     }
 
-    setQuizFactorA(a);
-    setQuizFactorB(b);
+    let nextProblem = deckRef.current.pop();
+
+    // Prevent immediate consecutive duplicate
+    if (nextProblem && prevA !== undefined && prevB !== undefined && nextProblem.a === prevA && nextProblem.b === prevB) {
+      if (deckRef.current.length > 0) {
+        const alt = deckRef.current.pop()!;
+        deckRef.current.unshift(nextProblem);
+        nextProblem = alt;
+      }
+    }
+
+    if (!nextProblem) {
+      const randTable = activeTables[Math.floor(Math.random() * activeTables.length)];
+      const randMultiplier = Math.floor(Math.random() * 10) + 1;
+      nextProblem = Math.random() < 0.5 
+        ? { a: randTable, b: randMultiplier } 
+        : { a: randMultiplier, b: randTable };
+    }
+
+    setQuizFactorA(nextProblem.a);
+    setQuizFactorB(nextProblem.b);
     setUserInput('');
     setFeedback(null);
     setShowHint(false);
-  }, [quizSelectedTable]);
+    setWrongAttempts(0);
+  }, [quizSelectedTables]);
+
+  // Multi-table toggle and preset handlers
+  const toggleTableSelection = (num: number) => {
+    soundPlayer.playKeySound();
+    let updated: number[];
+    if (quizSelectedTables.includes(num)) {
+      if (quizSelectedTables.length === 1) {
+        // Always keep at least 1 table selected
+        return;
+      }
+      updated = quizSelectedTables.filter(n => n !== num);
+    } else {
+      updated = [...quizSelectedTables, num].sort((a, b) => a - b);
+    }
+    setQuizSelectedTables(updated);
+    deckRef.current = createShuffledDeck(updated);
+    generateNewQuestion(updated);
+  };
+
+  const selectAllTables = () => {
+    soundPlayer.playKeySound();
+    const all = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    setQuizSelectedTables(all);
+    deckRef.current = createShuffledDeck(all);
+    generateNewQuestion(all);
+  };
+
+  const selectEvenTables = () => {
+    soundPlayer.playKeySound();
+    const even = [2, 4, 6, 8, 10];
+    setQuizSelectedTables(even);
+    deckRef.current = createShuffledDeck(even);
+    generateNewQuestion(even);
+  };
+
+  const selectOddTables = () => {
+    soundPlayer.playKeySound();
+    const odd = [1, 3, 5, 7, 9];
+    setQuizSelectedTables(odd);
+    deckRef.current = createShuffledDeck(odd);
+    generateNewQuestion(odd);
+  };
 
   // Timed challenge countdown effect
   useEffect(() => {
